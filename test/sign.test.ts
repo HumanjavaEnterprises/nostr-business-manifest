@@ -22,7 +22,7 @@ import { SIGNER, OTHER_NPUB } from './vectors.mjs';
 
 function boundManifest() {
   // A caller-supplied hostBase gives the manifest a page (https://joes.example.com),
-  // from which the signed event's `d` tag (the slug) is derived.
+  // from which the signed event's `d` tag (the full hostname) is derived.
   const base = buildBusinessManifest({
     slug: 'joes',
     name: 'Joe’s Plumbing',
@@ -39,7 +39,7 @@ describe('sign → verify round-trip', () => {
 
     expect(event.pubkey).toBe(SIGNER.pubkey);
     expect(event.kind).toBe(30078);
-    expect(event.tags).toEqual([['d', 'joes']]);
+    expect(event.tags).toEqual([['d', 'joes.example.com']]); // full host (0.2.0)
 
     const res = verifyManifest(event);
     expect(res.valid).toBe(true);

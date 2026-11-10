@@ -227,11 +227,21 @@ describe('builder parity — TS port === legacy JS (byte-identical)', () => {
     const good = buildBusinessManifest(FIXTURES['links-style (directory shape)']);
     expect(validateBusinessManifest(good)).toEqual(legacy.validateBusinessManifest(good));
 
+    // 0.2.0 adds 'onchain' to the allowed `via` list, so the "must be one of" message
+    // gains `|onchain`; otherwise the results are identical.
+    const legacyWithOnchain = (m: unknown) => {
+      const r = legacy.validateBusinessManifest(m);
+      return { ...r, errors: r.errors.map((e: string) => e.replace(/\|interac$/, '|interac|onchain')) };
+    };
+
     const bad = { schema: 'wrong', llm_friendly: false, channels: { book: { via: 'pigeon', endpoint: 'x' } } };
-    expect(validateBusinessManifest(bad)).toEqual(legacy.validateBusinessManifest(bad));
+    expect(validateBusinessManifest(bad)).toEqual(legacyWithOnchain(bad));
 
     const badVia = { ...good, channels: { book: { via: 'pigeon', endpoint: 'x' } } };
-    expect(validateBusinessManifest(badVia)).toEqual(legacy.validateBusinessManifest(badVia));
+    expect(validateBusinessManifest(badVia)).toEqual(legacyWithOnchain(badVia));
+
+    const onchainPay = { ...good, channels: { pay: { via: 'onchain', endpoint: 'bc1qexampleaddr' } } };
+    expect(validateBusinessManifest(onchainPay).valid).toBe(true);
   });
 
   it('exported constants match legacy', () => {
@@ -239,6 +249,8 @@ describe('builder parity — TS port === legacy JS (byte-identical)', () => {
     expect(VERSION).toBe(legacy.VERSION);
     expect(LICENSE).toBe(legacy.LICENSE);
     expect(ATTRIBUTION_NOTICE).toBe(legacy.ATTRIBUTION_NOTICE);
-    expect(CHANNEL_VIA).toEqual(legacy.CHANNEL_VIA);
+    // 0.2.0 adds 'onchain' (what bindEntity has always emitted for a pay address) — an
+    // intentional extension; the builder itself never emits it, so builder parity holds.
+    expect(CHANNEL_VIA).toEqual([...legacy.CHANNEL_VIA, 'onchain']);
   });
 });

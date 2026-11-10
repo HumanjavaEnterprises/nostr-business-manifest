@@ -1,21 +1,24 @@
 {
   "name": "nostr-business-manifest",
-  "version": "0.1.2",
-  "description": "Build and validate the bpub-business/0.1 agent-readable business manifest, then sign it as a NIP-01 Nostr event with schnorr (BIP340) and verify it. The signing side is enclave/client-only and outputs PUBLIC material exclusively; the builder, validator, binding, and verifier are pure and safe anywhere. ESM + CommonJS.",
+  "version": "0.2.0",
+  "description": "Build and validate the bpub-business/0.1 agent-readable business manifest, then sign it as a NIP-01 Nostr event with schnorr (BIP340) and verify it. The signing side is enclave/client-only and outputs PUBLIC material exclusively; the builder, validator, binding, and verifier are pure and safe anywhere. ESM + CommonJS; the ESM build is used for browsers and Cloudflare Workers.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "browser": "./dist/browser/nostr-business-manifest.min.js",
+  "unpkg": "./dist/browser/nostr-business-manifest.min.js",
+  "jsdelivr": "./dist/browser/nostr-business-manifest.min.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "workerd": "./dist/index.js",
       "worker": "./dist/index.js",
-      "browser": "./dist/browser/nostr-business-manifest.min.js",
+      "browser": "./dist/index.js",
       "import": "./dist/index.js",
-      "require": "./dist/cjs/index.js"
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/index.js"
     },
-    "./schema": "./schema/bpub-business-0.1.json"
+    "./schema": "./schema/bpub-business-0.1.json",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "npm run build:node && npm run build:browser",
@@ -67,7 +70,7 @@
     "@scure/base": "2.3.0"
   },
   "peerDependencies": {
-    "nostr-zpub-utils": "^0.1.0"
+    "nostr-zpub-utils": ">=0.1.0 <0.3.0"
   },
   "peerDependenciesMeta": {
     "nostr-zpub-utils": {
@@ -79,23 +82,33 @@
     "@types/node": "^22.20.1",
     "@typescript-eslint/eslint-plugin": "^8.65.0",
     "@typescript-eslint/parser": "^8.65.0",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "^4.1.12",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.7.0",
     "prettier": "^3.9.6",
     "typedoc": "^0.28.20",
     "typedoc-plugin-markdown": "^4.12.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
   },
   "files": [
     "dist",
+    "!dist/**/*.map",
     "schema",
     "README.md",
     "SPEC.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "overrides": {
+    "minimatch": "^11.0.6"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false
 }

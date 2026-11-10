@@ -27,7 +27,7 @@
       "required": ["name"],
       "properties": {
         "biz_id": { "type": ["string", "null"] },
-        "name": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
         "tagline": { "type": ["string", "null"] },
         "description": { "type": ["string", "null"] },
         "category": { "type": ["string", "null"] },
@@ -57,8 +57,8 @@
         "type": ["object", "null"],
         "required": ["via", "endpoint"],
         "properties": {
-          "via": { "enum": ["web", "email", "sms", "voice", "mcp", "api", "interac"] },
-          "endpoint": { "type": "string" },
+          "via": { "enum": ["web", "email", "sms", "voice", "mcp", "api", "interac", "onchain"] },
+          "endpoint": { "type": "string", "minLength": 1 },
           "languages": { "type": "array", "items": { "type": "string" } },
           "auto_answerable": { "type": "boolean" },
           "sla": { "type": "object" },
@@ -78,7 +78,7 @@
       "type": "object",
       "required": ["canonical"],
       "properties": {
-        "canonical": { "type": ["string", "null"] },
+        "canonical": { "type": "string", "minLength": 1 },
         "registry": { "type": "string" },
         "triangulation": { "type": "object" }
       }

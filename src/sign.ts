@@ -14,12 +14,15 @@ import {
   schnorr,
   bytesToHex,
   hexToBytes,
+  sha256,
   computeEventId,
   normalizePrivateKey,
   npubOf,
   pubkeyOfNpub,
   InvalidPublicKeyError,
 } from './nostr.js';
+import { validateBusinessManifest } from './validate.js';
+import { CHANNEL_VIA } from './schema.js';
 import type {
   BusinessManifest,
   BindOptions,
@@ -42,23 +45,115 @@ export {
  */
 export const MANIFEST_KIND = 30078;
 
-/** Derive the business slug (the `d` tag) from a manifest's page/canonical URL. */
-function slugOf(manifest: BusinessManifest): string {
-  const url = manifest?.identity?.page || manifest?.resilience?.canonical || '';
-  const sub = /^https?:\/\/([^./]+)\./i.exec(url);
-  if (sub) return sub[1];
+/** Slug of the business name — the `d` tag fallback when the manifest has no http(s) page. */
+function legacyNameSlug(manifest: BusinessManifest): string {
   const name = manifest?.identity?.name || 'business';
-  return String(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'business';
+  return (
+    String(name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'business'
+  );
+}
+
+/**
+ * Stable slug of `identity.name`, always starting with `_` so it can never equal a
+ * hostname-derived tag (hostnames cannot contain `_`).
+ *
+ * - Pure-ASCII names: `_` + the lowercase letters/digits joined by `-`, at most 64 chars
+ *   after the `_` (`Joe's Plumbing` → `_joe-s-plumbing`).
+ * - Names with any non-ASCII character: `_` + the ASCII part of the NFKD form (at most
+ *   47 chars) + `_` + the first 16 hex chars of sha256(UTF-8(NFKD(name).toLowerCase()))
+ *   (`東京` → `__<16 hex>`, `Café` → `_cafe_<16 hex>`). NFC and NFD spellings agree; lone
+ *   surrogates are encoded as U+FFFD by `TextEncoder`, so the result is deterministic.
+ *
+ * The result is at most 65 characters. ASCII-only names that differ only in
+ * punctuation/spacing still share a slug, as in 0.1.x.
+ */
+function nameSlug(manifest: BusinessManifest): string {
+  const raw = manifest?.identity?.name;
+  const name = typeof raw === 'string' && raw.length > 0 ? raw : 'business';
+  const folded = name.normalize('NFKD').toLowerCase();
+  const asciiSlug = (max: number) =>
+    folded
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+/, '')
+      .slice(0, max)
+      .replace(/-+$/, '');
+  // eslint-disable-next-line no-control-regex -- "any non-ASCII" is the test
+  if (!/[^\x00-\x7f]/.test(folded)) return `_${asciiSlug(64) || 'business'}`;
+  const hash = bytesToHex(sha256(new TextEncoder().encode(folded))).slice(0, 16);
+  return `_${asciiSlug(47)}_${hash}`;
+}
+
+/** The manifest's page URL (or canonical URL), or '' when neither is a string. */
+function pageUrlOf(manifest: BusinessManifest): string {
+  const url = manifest?.identity?.page || manifest?.resilience?.canonical || '';
+  return typeof url === 'string' ? url : '';
+}
+
+/**
+ * The full, normalised hostname of an http(s) URL: lowercased (and punycoded) by the
+ * WHATWG URL parser, without port, path, or trailing dot, and with ONE leading `www.`
+ * removed when a dotted host remains (`www.acme.com` → `acme.com`, but `www.com` stays).
+ * Returns null for anything that is not an absolute http(s) URL.
+ */
+function normalisedHostOf(url: string): string | null {
+  // Refuse what the WHATWG parser would silently repair: leading/trailing or inner
+  // whitespace and control characters, backslashes, and a missing `//`.
+  // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
+  if (!/^https?:\/\/[^\x00-\x20\x7f\\]+$/i.test(url)) return null;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  let host = u.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host || host.startsWith('.') || host.includes('..')) return null;
+  if (host.startsWith('www.') && host.slice(4).includes('.')) host = host.slice(4);
+  return host;
+}
+
+/**
+ * The default `d` tag for a manifest event: the full normalised hostname of the
+ * manifest's page (or canonical) URL — `https://www.Acme.com:443/x` → `acme.com`,
+ * `https://joes.example.com` → `joes.example.com`. One leading `www.` is stripped, so a
+ * business's `www.` and bare host map to the same event. Falls back to a slug of
+ * `identity.name` when there is no http(s) page.
+ *
+ * Changed in 0.2.0 — 0.1.x used only the FIRST DNS label (so every `www.` page got
+ * `d="www"`). See {@link legacyManifestDTag} to find or replace events signed by 0.1.x.
+ */
+export function manifestDTag(manifest: BusinessManifest): string {
+  return normalisedHostOf(pageUrlOf(manifest)) ?? nameSlug(manifest);
+}
+
+/**
+ * The `d` tag that 0.1.x derived for a manifest (the first DNS label of the page URL,
+ * e.g. `https://www.acme.com` → `www`). Use it to look up events published with 0.1.x,
+ * or pass it as `signManifest(m, nsec, { dTag: legacyManifestDTag(m) })` to keep
+ * replacing such an event in place. New events should use {@link manifestDTag}.
+ *
+ * @deprecated only for compatibility with events signed by 0.1.x.
+ */
+export function legacyManifestDTag(manifest: BusinessManifest): string {
+  // Byte-for-byte the 0.1.x rule (including RegExp's string coercion of a non-string page).
+  const url = manifest?.identity?.page || manifest?.resilience?.canonical || '';
+  const sub = /^https?:\/\/([^./]+)\./i.exec(url as string);
+  if (sub) return sub[1];
+  return legacyNameSlug(manifest);
 }
 
 /** Thrown when a manifest cannot be safely bound (e.g. a raw extended key was passed). */
 export class BindingError extends Error {
-  constructor(message: string) {
+  /** The underlying error, when this wraps one (e.g. the peer's `NonBip84KeyError`). */
+  readonly cause?: unknown;
+  constructor(message: string, options?: { cause?: unknown }) {
     super(message);
     this.name = 'BindingError';
+    if (options && 'cause' in options) this.cause = options.cause;
     Object.setPrototypeOf(this, BindingError.prototype);
   }
 }
@@ -130,6 +225,12 @@ export function bindEntity(manifest: BusinessManifest, opts: BindOptions): Busin
           'Nothing was written.',
       );
     }
+    if (opts.payVia !== undefined && !CHANNEL_VIA.includes(opts.payVia)) {
+      throw new BindingError(
+        `bindEntity: payVia must be one of ${CHANNEL_VIA.join('|')} (got ${JSON.stringify(opts.payVia)}). ` +
+          'Nothing was written.',
+      );
+    }
     const prevPay = next.channels.pay ?? {};
     next.channels.pay = {
       ...prevPay,
@@ -181,7 +282,19 @@ export async function deriveZpubAddress(
   if (typeof fn !== 'function') {
     throw new BindingError('nostr-zpub-utils did not export zpubToAddress');
   }
-  return fn(zpub, { asset, index: opts.index ?? 0, change: opts.change ?? 0 });
+  try {
+    // Never pass the peer's `allowNonBip84` opt-in: only a BIP-84 zpub/vpub is accepted.
+    return await fn(zpub, { asset, index: opts.index ?? 0, change: opts.change ?? 0 });
+  } catch (e) {
+    if ((e as { name?: unknown })?.name === 'NonBip84KeyError') {
+      throw new BindingError(
+        'deriveZpubAddress: nostr-zpub-utils refused the key (NonBip84KeyError) — only a BIP-84 ' +
+          'zpub/vpub is accepted. Export the native-SegWit (BIP-84) account key from the wallet.',
+        { cause: e },
+      );
+    }
+    throw e;
+  }
 }
 
 /**
@@ -207,13 +320,17 @@ export function signManifest(
     throw new TypeError('signManifest: manifest must be an object');
   }
 
+  if (opts.dTag !== undefined && (typeof opts.dTag !== 'string' || opts.dTag.length === 0)) {
+    throw new TypeError('signManifest: opts.dTag must be a non-empty string');
+  }
+
   // Decode the private key. `sk` is the ONLY private value in this function and is
   // never returned or logged. normalizePrivateKey throws WITHOUT echoing the input.
   const sk = normalizePrivateKey(nsec);
   try {
     const pubkey = bytesToHex(schnorr.getPublicKey(sk));
     const created_at = opts.created_at ?? Math.floor(Date.now() / 1000);
-    const dTag = opts.dTag ?? slugOf(manifest);
+    const dTag = opts.dTag ?? manifestDTag(manifest);
     const tags: string[][] = [['d', dTag]];
     const content = JSON.stringify(manifest);
 
@@ -227,62 +344,190 @@ export function signManifest(
   }
 }
 
+/** Read an OWN data property; throw on an accessor (getter). Missing → undefined. */
+function ownData(o: object, key: string): unknown {
+  const d = Object.getOwnPropertyDescriptor(o, key);
+  if (!d) return undefined;
+  if (!('value' in d)) throw new TypeError(`${key} is an accessor`);
+  return d.value;
+}
+
+/** Copy a plain array via own data properties, or null if it is not one (holes, getters, toJSON). */
+function copyPlainArray(v: unknown): unknown[] | null {
+  if (!Array.isArray(v)) return null;
+  if (Object.getOwnPropertyDescriptor(v, 'toJSON')) return null;
+  const out: unknown[] = [];
+  for (let i = 0; i < v.length; i++) {
+    const d = Object.getOwnPropertyDescriptor(v, String(i));
+    if (!d || !('value' in d)) return null;
+    out.push(d.value);
+  }
+  return out;
+}
+
+/** Copy `tags` as fresh string[][] or return null when it is not exactly that. */
+function copyTags(v: unknown): string[][] | null {
+  const outer = copyPlainArray(v);
+  if (!outer) return null;
+  const out: string[][] = [];
+  for (const t of outer) {
+    const inner = copyPlainArray(t);
+    if (!inner || !inner.every((x) => typeof x === 'string')) return null;
+    out.push(inner as string[]);
+  }
+  return out;
+}
+
+/**
+ * Scan ALREADY-VALID JSON text and return the first object key that is `__proto__` or
+ * repeats within the same object (compared after unescaping), or null. Linear, no recursion.
+ * Never loops past the end, even on truncated input.
+ *
+ * @internal exported for tests only; not part of the package API (not re-exported by index).
+ */
+export function findDuplicateOrProtoKey(json: string): string | null {
+  const stack: Array<Set<string> | null> = []; // Set = object (its keys so far), null = array
+  let expectKey = false;
+  for (let i = 0; i < json.length; i++) {
+    const c = json[i];
+    if (c === '"') {
+      let j = i + 1;
+      let escaped = false;
+      while (j < json.length && json[j] !== '"') {
+        if (json[j] === '\\') {
+          escaped = true;
+          j += 2;
+        } else j++;
+      }
+      if (j >= json.length) return null; // unterminated string: not valid JSON, nothing to report
+      const top = stack[stack.length - 1];
+      if (expectKey && top) {
+        const key = escaped ? (JSON.parse(json.slice(i, j + 1)) as string) : json.slice(i + 1, j);
+        if (key === '__proto__' || top.has(key)) return key;
+        top.add(key);
+        expectKey = false;
+      }
+      i = j;
+    } else if (c === '{') {
+      stack.push(new Set());
+      expectKey = true;
+    } else if (c === '[') {
+      stack.push(null);
+      expectKey = false;
+    } else if (c === '}' || c === ']') {
+      stack.pop();
+      expectKey = false;
+    } else if (c === ',') {
+      expectKey = stack[stack.length - 1] instanceof Set;
+    } else if (c === ':') {
+      expectKey = false;
+    }
+  }
+  return null;
+}
+
+const LOWER_HEX_64 = /^[0-9a-f]{64}$/;
+const LOWER_HEX_128 = /^[0-9a-f]{128}$/;
+
 /**
  * Verify a signed manifest event. Pure — no private key.
  *
- * Recomputes the event id from the event fields, schnorr-verifies the signature
- * against `event.pubkey`, parses the manifest from `content`, and asserts the
- * manifest's `identity.nostr.npub` equals `npubOf(event.pubkey)` — i.e. the card
- * claims the same identity that signed it.
+ * Returns `valid: true` only when ALL of these hold:
+ *
+ * 1. the event is well-formed: `id` and `pubkey` are 64 and `sig` 128 LOWERCASE hex
+ *    chars, `kind` and `created_at` are integers, `tags` is an array of string arrays,
+ *    `content` is a string;
+ * 2. `kind === MANIFEST_KIND` (30078);
+ * 3. there is exactly one `d` tag and its value is a non-empty string (any value — the
+ *    signer may have overridden it, or signed with 0.1.x; see {@link manifestDTag});
+ * 4. the recomputed NIP-01 id equals `id`, and the schnorr signature over it verifies
+ *    against `pubkey`;
+ * 5. `content` parses as JSON and the manifest's `identity.nostr.npub` equals
+ *    `npubOf(event.pubkey)` — the card claims the identity that signed it;
+ * 6. the manifest passes {@link validateBusinessManifest} (`schema` is
+ *    `bpub-business/0.1`, and the required fields are present).
  *
  * @param event - the signed Nostr event
  * @returns `{ valid, npub, manifest, reason? }`
  */
 export function verifyManifest(event: NostrEvent): VerifyResult {
-  if (!event || typeof event !== 'object') {
-    return { valid: false, npub: null, manifest: null, reason: 'event is not an object' };
-  }
+  const fail = (reason: string, npub: string | null = null, manifest: BusinessManifest | null = null) =>
+    ({ valid: false, npub, manifest, reason }) as VerifyResult;
 
-  // 1. Recompute the id and check it matches the claimed id (tamper on any field).
-  let recomputedId: string;
+  if (!event || typeof event !== 'object') return fail('event is not an object');
+
+  // 1. Shape — read OWN DATA properties exactly once (no getters, no inherited values) and
+  //    copy the tags, so the bytes hashed below are the bytes that were checked.
+  let id: unknown, pubkey: unknown, sig: unknown, kind: unknown, created_at: unknown, content: unknown;
+  let tags: string[][] | null;
   try {
-    recomputedId = computeEventId(event);
+    id = ownData(event, 'id');
+    pubkey = ownData(event, 'pubkey');
+    sig = ownData(event, 'sig');
+    kind = ownData(event, 'kind');
+    created_at = ownData(event, 'created_at');
+    content = ownData(event, 'content');
+    tags = copyTags(ownData(event, 'tags'));
   } catch {
-    return { valid: false, npub: null, manifest: null, reason: 'event fields are malformed' };
+    return fail('event fields must be plain data properties');
   }
-  if (recomputedId !== event.id) {
-    return { valid: false, npub: null, manifest: null, reason: 'event id does not match content' };
+  if (typeof id !== 'string' || !LOWER_HEX_64.test(id)) return fail('event id must be 64 lowercase hex chars');
+  if (typeof pubkey !== 'string' || !LOWER_HEX_64.test(pubkey)) {
+    return fail('event pubkey must be 64 lowercase hex chars');
+  }
+  if (typeof sig !== 'string' || !LOWER_HEX_128.test(sig)) return fail('event sig must be 128 lowercase hex chars');
+  if (!Number.isSafeInteger(kind) || !Number.isSafeInteger(created_at)) {
+    return fail('event kind and created_at must be integers');
+  }
+  if (tags === null) return fail('event tags must be an array of string arrays');
+  if (typeof content !== 'string') return fail('event content must be a string');
+
+  // 2. Kind — a text note (or any other kind) is not a business manifest.
+  if (kind !== MANIFEST_KIND) return fail(`event kind must be ${MANIFEST_KIND}`);
+
+  // 3. Exactly one non-empty `d` tag (parameterized-replaceable addressing).
+  const dTags = tags.filter((t) => t[0] === 'd');
+  if (dTags.length !== 1 || typeof dTags[0][1] !== 'string' || dTags[0][1].length === 0) {
+    return fail('event must carry exactly one non-empty d tag');
   }
 
-  // 2. Schnorr-verify the signature over the id against the event pubkey.
+  // 4a. Recompute the id and check it matches the claimed id (tamper on any field).
+  const checked = { pubkey, created_at: created_at as number, kind: kind as number, tags, content };
+  if (computeEventId(checked) !== id) return fail('event id does not match content');
+
+  // 4b. Schnorr-verify the signature over the id against the event pubkey.
   let sigOk: boolean;
   try {
-    sigOk = schnorr.verify(hexToBytes(event.sig), hexToBytes(event.id), hexToBytes(event.pubkey));
+    sigOk = schnorr.verify(hexToBytes(sig), hexToBytes(id), hexToBytes(pubkey));
   } catch {
     sigOk = false;
   }
-  if (!sigOk) {
-    return { valid: false, npub: null, manifest: null, reason: 'schnorr signature is invalid' };
-  }
+  if (!sigOk) return fail('schnorr signature is invalid');
 
-  // 3. Parse the manifest from content.
+  // 5a. Parse the manifest from content.
   let manifest: BusinessManifest;
   try {
-    manifest = JSON.parse(event.content) as BusinessManifest;
+    manifest = JSON.parse(content) as BusinessManifest;
   } catch {
-    return { valid: false, npub: null, manifest: null, reason: 'content is not valid JSON' };
+    return fail('content is not valid JSON');
   }
+  // 5a'. One meaning only: no duplicate keys (JSON.parse is last-wins, other parsers are
+  //      not) and no `__proto__` keys, so `result.manifest` is a clean plain object that
+  //      every reader of `content` would see the same way.
+  const badKey = findDuplicateOrProtoKey(content);
+  if (badKey !== null) return fail(`content has a duplicate or forbidden key: ${JSON.stringify(badKey)}`);
+  const signerNpub = npubOf(pubkey);
 
-  // 4. Binding integrity: the manifest must claim the npub that signed it.
-  const signerNpub = npubOf(event.pubkey);
+  // 5b. Binding integrity: the manifest must claim the npub that signed it.
   const claimedNpub = manifest?.identity?.nostr?.npub ?? null;
   if (claimedNpub !== signerNpub) {
-    return {
-      valid: false,
-      npub: signerNpub,
-      manifest,
-      reason: 'manifest npub does not match the signing pubkey',
-    };
+    return fail('manifest npub does not match the signing pubkey', signerNpub, manifest);
+  }
+
+  // 6. Schema: the content must actually be a bpub-business/0.1 manifest.
+  const schema = validateBusinessManifest(manifest);
+  if (!schema.valid) {
+    return fail(`manifest fails the bpub-business schema: ${schema.errors.join('; ')}`, signerNpub, manifest);
   }
 
   return { valid: true, npub: signerNpub, manifest };

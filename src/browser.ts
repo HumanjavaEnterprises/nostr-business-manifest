@@ -1,5 +1,6 @@
 /**
- * Browser entry point — re-exports the full public API for the IIFE bundle.
+ * Entry point for the IIFE `<script>` bundle (global `NostrBusinessManifest`, alias
+ * `NostrBpubUtilities`). Bundlers and Workers import the ESM build instead.
  *
  * @packageDocumentation
  */

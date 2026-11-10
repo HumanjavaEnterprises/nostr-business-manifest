@@ -7,7 +7,7 @@ is and keeps every decision about *how* (which domain, which registry) in the ca
 hands, so each adopting platform supplies its own host.
 
 Part of the `nostr-*` utilities set: `nostr-agentic-identity` (identity),
-`nostr-zpub-utilities` (BTC/LTC receiving keys), and this — the business manifest.
+`nostr-zpub-utils` (BTC/LTC receiving keys), and this — the business manifest.
 
 > **`bpub` is the format name, not a bech32 prefix.** The manifest is versioned
 > `bpub-business/0.1`; it is not an encoding like `npub`/`nsec`. The npm package and repo are
@@ -25,8 +25,9 @@ Part of the `nostr-*` utilities set: `nostr-agentic-identity` (identity),
 
 **2 — the signature (verifiable, enclave-side to sign).** `bindEntity` attaches an `npub`
 and, optionally, a pre-derived receiving **address** for the pay channel; `signManifest`
-schnorr-signs the manifest as a Nostr event; `verifyManifest` checks the signature and
-that the manifest claims the same identity that signed it.
+schnorr-signs the manifest as a Nostr event; `verifyManifest` checks the event kind, the `d`
+tag, the signature, the manifest schema, and that the manifest claims the same identity that
+signed it.
 
 ## Install
 
@@ -73,7 +74,7 @@ const event = signManifest(bound, nsec);                 // schnorr-signed Nostr
 const { valid, npub: signer, manifest: m } = verifyManifest(event); // anyone, no host
 ```
 
-To turn a `zpub` into a single address first (needs the optional `nostr-zpub-utilities`
+To turn a `zpub` into a single address first (needs the optional `nostr-zpub-utils`
 peer), use `deriveZpubAddress`:
 
 ```js
@@ -93,11 +94,39 @@ const bound = bindEntity(manifest, { npub, payAddress, payAsset: 'BTC' });
 - `bindEntity(manifest, { npub, payAddress?, payAsset?, payVia? })` → manifest with
   identity set and, if a pre-derived `payAddress` is given, a pay channel. A raw
   extended key (`zpub`/`xpub`) is refused, never embedded.
-- `deriveZpubAddress(zpub, asset?)` → a single receiving address for use as `payAddress`
-  (needs the optional `nostr-zpub-utilities` peer; throws if it is absent).
-- `signManifest(manifest, nsec)` → a schnorr-signed Nostr event. **Enclave/client-only.**
-- `verifyManifest(event)` → `{ valid, npub, manifest }`.
-- JSON Schema for external validators: `schema/bpub-business-0.1.json`.
+- `deriveZpubAddress(zpub, asset, { index?, change? })` → a single receiving address for use
+  as `payAddress`. `asset` (`'BTC'` | `'LTC'`) is required. Needs the optional
+  `nostr-zpub-utils` peer (`>=0.1.0 <0.3.0`); throws if it is absent. Only a BIP-84
+  `zpub`/`vpub` is accepted: with nostr-zpub-utils 0.2.x any other key (`xpub`, `Ltub`, …)
+  throws a `BindingError` whose `cause` is the peer's `NonBip84KeyError`.
+- `signManifest(manifest, nsec, { created_at?, dTag? })` → a schnorr-signed Nostr event
+  (kind `30078`, one `d` tag). **Enclave/client-only.**
+- `verifyManifest(event)` → `{ valid, npub, manifest, reason? }`. `valid` is true only when the
+  event is kind `30078` with exactly one non-empty `d` tag, `id`/`pubkey`/`sig` are lowercase
+  hex, the id and schnorr signature check out, the content passes `validateBusinessManifest`,
+  and `identity.nostr.npub` is the npub of the signing key.
+  Content with duplicate keys or a `__proto__` key is rejected; use the returned `manifest`
+  rather than re-parsing `event.content`.
+- `manifestDTag(manifest)` → the default `d` tag: the page's full hostname, lowercased, without
+  port or trailing dot, with one leading `www.` removed (`https://www.Acme.com` → `acme.com`,
+  `https://joes.example.com` → `joes.example.com`). A URL that would need repairing (surrounding
+  or inner whitespace, a backslash, `https:acme.com` without `//`) is not used. Without a usable
+  http(s) page it falls back to a slug of the name, which always starts with `_` (so it never
+  equals a hostname tag): `_joe-s-plumbing` for ASCII names, and for names with non-ASCII
+  characters the ASCII part plus a 16-hex sha256 suffix (`Café` → `_cafe_<16 hex>`), at most 65
+  chars. See SPEC for the exact rule.
+- `legacyManifestDTag(manifest)` → the `d` tag 0.1.x used (the first DNS label, e.g. `www`).
+  Use it to find events published with 0.1.x, or pass it as `dTag` to keep replacing one.
+- JSON Schema for external validators: `schema/bpub-business-0.1.json`
+  (`import schema from 'nostr-business-manifest/schema' with { type: 'json' }`).
+
+## Browsers, Workers, `<script>`
+
+Bundlers (Vite, webpack, esbuild) and Cloudflare Workers resolve the package to its ESM build,
+so `import { verifyManifest } from 'nostr-business-manifest'` works the same everywhere.
+For a plain `<script>` tag there is a minified bundle on unpkg/jsdelivr
+(`dist/browser/nostr-business-manifest.min.js`) that defines the global
+`NostrBusinessManifest` (the old name `NostrBpubUtilities` still works).
 
 ## The shape (abridged)
 

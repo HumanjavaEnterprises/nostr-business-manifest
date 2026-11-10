@@ -37,7 +37,7 @@ export const ATTRIBUTION_NOTICE =
 export const CHANNEL_VERBS = ['book', 'pay', 'support', 'ask', 'order', 'quote', 'website', 'menu'];
 
 /** Allowed transports for a channel's `via` field. */
-export const CHANNEL_VIA = ['web', 'email', 'sms', 'voice', 'mcp', 'api', 'interac'];
+export const CHANNEL_VIA = ['web', 'email', 'sms', 'voice', 'mcp', 'api', 'interac', 'onchain'];
 
 /**
  * The core channels every manifest declares (as `null` when absent), vs the

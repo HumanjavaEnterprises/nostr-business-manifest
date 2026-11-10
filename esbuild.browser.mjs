@@ -4,11 +4,13 @@ const result = await build({
   entryPoints: ['src/browser.ts'],
   bundle: true,
   minify: true,
-  sourcemap: true,
-  // Do NOT inline the full TS source into the sourcemap — it dominated the tarball.
-  sourcesContent: false,
+  // A plain <script> asset (served via unpkg/jsdelivr). Bundlers and Workers use the
+  // ESM build (dist/index.js) through the `exports` conditions, never this file.
+  sourcemap: false,
   format: 'iife',
-  globalName: 'NostrBpubUtilities',
+  globalName: 'NostrBusinessManifest',
+  // Keep the pre-0.2.0 global name as an alias for existing <script> users.
+  footer: { js: 'globalThis.NostrBpubUtilities=NostrBusinessManifest;' },
   outfile: 'dist/browser/nostr-business-manifest.min.js',
   target: ['es2020'],
   platform: 'browser',

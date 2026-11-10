@@ -21,6 +21,7 @@
 // ── Types ──────────────────────────────────────────────────────────────────────
 export type {
   Channel,
+  ChannelVia,
   Channels,
   HoursEntry,
   Link,
@@ -61,6 +62,8 @@ export {
   deriveZpubAddress,
   signManifest,
   verifyManifest,
+  manifestDTag,
+  legacyManifestDTag,
   npubOf,
   pubkeyOfNpub,
   MANIFEST_KIND,

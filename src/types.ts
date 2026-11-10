@@ -12,6 +12,9 @@
  */
 
 /** A single verb-typed channel: how to reach a business for one kind of action. */
+/** The allowed `via` transports (the values of `CHANNEL_VIA`). */
+export type ChannelVia = 'web' | 'email' | 'sms' | 'voice' | 'mcp' | 'api' | 'interac' | 'onchain';
+
 export interface Channel {
   /** Transport — one of {@link CHANNEL_VIA}. */
   via: string;
@@ -159,7 +162,7 @@ export interface NostrEvent {
   created_at: number;
   /** Event kind — parameterized-replaceable ({@link MANIFEST_KIND}). */
   kind: number;
-  /** Tags — includes the `d` tag (the business slug) for replaceability. */
+  /** Tags — exactly one `d` tag (see `manifestDTag`) for replaceability. */
   tags: string[][];
   /** The serialized manifest (JSON). */
   content: string;
@@ -177,10 +180,13 @@ export interface BindOptions {
    * here is rejected.
    */
   payAddress?: string;
-  /** Asset label for the pay channel when `payAddress` is set. Default `'BTC'`. */
+  /** Asset label for the pay channel — REQUIRED when `payAddress` is set (no default). */
   payAsset?: 'BTC' | 'LTC';
-  /** Transport for the pay channel when `payAddress` is set. Default `'onchain'`. */
-  payVia?: string;
+  /**
+   * Transport for the pay channel when `payAddress` is set. Default `'onchain'`. Must be
+   * one of `CHANNEL_VIA`; anything else throws a `BindingError`.
+   */
+  payVia?: ChannelVia;
   /**
    * DISCOURAGED — a raw extended public key. `bindEntity` will NOT embed this (a zpub
    * exposes the whole receive-address chain) and THROWS if it is set. Derive a single
@@ -193,7 +199,11 @@ export interface BindOptions {
 
 /** The result of {@link verifyManifest}. */
 export interface VerifyResult {
-  /** True iff the signature verifies AND the manifest npub matches the event pubkey. */
+  /**
+   * True iff the event is a well-formed kind-30078 event with one `d` tag, the id and
+   * signature verify, the content passes the schema, AND the manifest npub matches the
+   * event pubkey.
+   */
   valid: boolean;
   /** The signer's npub (bech32), derived from `event.pubkey`, or null when invalid. */
   npub: string | null;
@@ -207,6 +217,6 @@ export interface VerifyResult {
 export interface SignOptions {
   /** Override the event `created_at` (seconds). Defaults to now. */
   created_at?: number;
-  /** Override the `d` tag. Defaults to the manifest slug (derived from the page URL). */
+  /** Override the `d` tag. Defaults to `manifestDTag(manifest)` (the page's normalised hostname). */
   dTag?: string;
 }

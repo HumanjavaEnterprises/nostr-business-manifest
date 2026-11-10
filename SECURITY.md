@@ -22,9 +22,10 @@ We release patches for security vulnerabilities. Which versions are eligible for
 
 - **Everything else touches PUBLIC material only.** `buildBusinessManifest`, `validateBusinessManifest`,
   `linksToChannels`, `bindEntity`, and `verifyManifest` never see a private key and are safe to run anywhere,
-  including a server. `verifyManifest` recomputes the event id, schnorr-verifies the signature against the
-  event's public key, and asserts the manifest's claimed `npub` matches the signing key — so a manifest
-  signed by a different key than it claims is rejected.
+  including a server. `verifyManifest` requires kind `30078`, exactly one `d` tag and lowercase hex, recomputes
+  the event id, schnorr-verifies the signature against the event's public key, validates the manifest schema,
+  and asserts the manifest's claimed `npub` matches the signing key — so a manifest signed by a different key
+  than it claims, a text note, or other app data from the same key is rejected.
 
 - **Private-key inputs are rejected without echo.** `normalizePrivateKey` refuses anything that is not a
   private key (a public key, a wrong-length value, a mnemonic) with an error that never contains the input,
@@ -34,7 +35,7 @@ We release patches for security vulnerabilities. Which versions are eligible for
 
 Runtime dependencies are limited to the audited, zero-transitive set, pinned exact: `@noble/curves`
 (schnorr / BIP340), `@noble/hashes` (sha256), and `@scure/base` (bech32 / hex). There is no `nostr-tools`
-dependency — the NIP-01 event id and schnorr operations are built directly on `@noble`. `nostr-zpub-utilities`
+dependency — the NIP-01 event id and schnorr operations are built directly on `@noble`. `nostr-zpub-utils`
 is an optional peer used only by `bindEntity`.
 
 ## Reporting a Vulnerability
